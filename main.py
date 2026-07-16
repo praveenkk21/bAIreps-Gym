@@ -4,7 +4,10 @@ import os as os
 from services.auth.login_wall import render_login_wall
 from services.state.session_defaults import initial_session_defaults
 from services.config.workout_config import EXERCISE_OPTIONS
-from services.ui.style_loader import load_css, inject_local_font
+from services.ui.style_loader import load_css, inject_local_font, inject_webrtc_styles
+from services.persistence.exercise_repository import init_db
+from streamlit_webrtc import webrtc_streamer, WebRtcMode
+# from services.vision.exercise_video_processor import VideoProcessorClass
 
 
 def main():
@@ -18,6 +21,8 @@ def main():
     load_css(os.path.join(os.getcwd(),"static","style.css"))
     inject_local_font(os.path.join(os.getcwd(),"static","AdobeClean.otf"),"AdobeClean")
 
+    init_db()
+
     if not render_login_wall():
         return
     
@@ -27,7 +32,6 @@ def main():
 
     with st.sidebar:
         st.title("Our AI Coach ❤️")
-
         if(st.session_state.username):
             username=st.session_state.username
             st.caption("🙎‍♂️Login as "+ username)
@@ -41,7 +45,7 @@ def main():
             st.number_input("Sets", min_value=0, max_value=50, key="plan_sets", step=1)
             st.number_input("Reps per set", min_value=0, max_value=50, key="plan_reps", step=1)
             st.markdown("")
-            start_session_button = st.button("Start Session", width="stretch", key="Start")
+            start_session_button = st.button("Start workout", width="stretch", key="Start")
             if start_session_button:
                 st.session_state["workout_started"] = True
                 st.rerun()
@@ -53,7 +57,7 @@ def main():
             print(exercise, sets, reps)
 
             st.info(f"**{exercise}** -- {sets} Sets / {reps} Reps")
-            end_session_button = st.button("End Session", width="stretch", key="end_session_button")
+            end_session_button = st.button("End workout", width="stretch", key="end_session_button")
                    
             if end_session_button:
                 st.session_state["workout_started"] = False
@@ -104,7 +108,47 @@ def main():
                 st.metric("Front Knee Angle", f"{st.session_state.front_knee_angle}°")
                 st.metric("Torso Angle", f"{st.session_state.torso_angle}°")
                 st.metric("Balance Status", st.session_state.balance_status)
+    
+    st.header("AI Real time GYM coach")
+    st.markdown("#### Real time pose detection with proactive AI voice coaching")
+
+    if not workout_started:
+        st.markdown(
+            """
+            <div style="
+                border: 10px dashed #444;
+                border-radius: 0px;
+                padding: 48px 32px;
+                text-align: center;
+                color: #888;
+                margin-top: 32px;
+                margin-bottom: 32px;
+            ">
+                <h2 style="color:#ccc; margin-bottom:8px;">👈 Set your workout plan</h2>
+                <p style="font-size:1.05rem;">
+                    Choose your exercise, sets and reps in the sidebar,<br>
+                    then click <strong>Start Workout</strong> to activate the camera and AI coach.
+                </p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    else:
+        context = webrtc_streamer(
+            key="exercise-analysis",
+            mode=WebRtcMode.SENDRECV,
+            video_processor_factory=None,
+            rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
+            media_stream_constraints={
+                "video": True,
+                "audio": False
+            },
+            async_processing=True
+        )
+
+    st.markdown("##### Workout History")
+    inject_webrtc_styles()
 
 if __name__ == "__main__":
     main()
-    
+
