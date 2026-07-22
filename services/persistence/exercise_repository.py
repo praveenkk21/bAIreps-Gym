@@ -28,14 +28,20 @@ def init_db() -> None:
                 id            INTEGER PRIMARY KEY AUTOINCREMENT,
                 username      TEXT UNIQUE NOT NULL,
                 password_hash TEXT NOT NULL DEFAULT '',
+                google_id     TEXT UNIQUE,
+                email         TEXT,
                 created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """
         )
-        # migrate existing databases that lack the password_hash column
+        # migrate existing databases that lack newer columns
         cols = {row[1] for row in conn.execute("PRAGMA table_info(users)")}
         if "password_hash" not in cols:
             conn.execute("ALTER TABLE users ADD COLUMN password_hash TEXT NOT NULL DEFAULT ''")
+        if "google_id" not in cols:
+            conn.execute("ALTER TABLE users ADD COLUMN google_id TEXT UNIQUE")
+        if "email" not in cols:
+            conn.execute("ALTER TABLE users ADD COLUMN email TEXT")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS exercises (
@@ -79,6 +85,30 @@ def verify_user(username: str, password: str) -> sqlite3.Row | None:
     if not user["password_hash"] or not bcrypt.checkpw(password.encode(), user["password_hash"].encode()):
         return None
     return user
+
+
+def get_or_create_google_user(google_id: str, email: str, name: str) -> sqlite3.Row:
+    conn = _get_connection()
+    user = conn.execute(
+        "SELECT * FROM users WHERE google_id = ?", (google_id,)
+    ).fetchone()
+    if user is not None:
+        return user
+
+    # derive a unique username from the Google display name
+    base = name.replace(" ", "_").lower() or email.split("@")[0]
+    username = base
+    suffix = 1
+    while conn.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone():
+        username = f"{base}_{suffix}"
+        suffix += 1
+
+    with conn:
+        conn.execute(
+            "INSERT INTO users (username, password_hash, google_id, email) VALUES (?, '', ?, ?)",
+            (username, google_id, email),
+        )
+    return conn.execute("SELECT * FROM users WHERE google_id = ?", (google_id,)).fetchone()
 
 
 def add_exercise(user_id, exercise_name, reps, sets, time):

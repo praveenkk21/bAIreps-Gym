@@ -1,13 +1,139 @@
+import os
+import secrets
 import streamlit as st
-from services.persistence.exercise_repository import create_user, get_user, verify_user
+from urllib.parse import urlencode
+import httpx
+from dotenv import load_dotenv
+
+from services.persistence.exercise_repository import (
+    create_user,
+    get_user,
+    verify_user,
+    get_or_create_google_user,
+)
+
+load_dotenv()
+
+_GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+_GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+_GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
 
 
-def render_login_wall():
+def _google_client_id() -> str:
+    return os.environ.get("GOOGLE_CLIENT_ID", "")
+
+
+def _google_client_secret() -> str:
+    return os.environ.get("GOOGLE_CLIENT_SECRET", "")
+
+
+def _redirect_uri() -> str:
+    return os.environ.get("GOOGLE_REDIRECT_URI", "http://localhost:8501")
+
+
+def _build_google_auth_url(state: str) -> str:
+    params = {
+        "client_id": _google_client_id(),
+        "redirect_uri": _redirect_uri(),
+        "response_type": "code",
+        "scope": "openid email profile",
+        "state": state,
+        "access_type": "offline",
+        "prompt": "select_account",
+    }
+    return f"{_GOOGLE_AUTH_URL}?{urlencode(params)}"
+
+
+def _exchange_code_for_user(code: str) -> dict | None:
+    try:
+        resp = httpx.post(
+            _GOOGLE_TOKEN_URL,
+            data={
+                "code": code,
+                "client_id": _google_client_id(),
+                "client_secret": _google_client_secret(),
+                "redirect_uri": _redirect_uri(),
+                "grant_type": "authorization_code",
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        access_token = resp.json().get("access_token")
+        info = httpx.get(
+            _GOOGLE_USERINFO_URL,
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=10,
+        )
+        info.raise_for_status()
+        return info.json()
+    except Exception as e:
+        st.error(f"Google sign-in failed: {e}")
+        return None
+
+
+def _handle_oauth_callback() -> bool:
+    """
+    If the URL contains ?code= and state matches, exchange the code and log in.
+    Returns True if login succeeded.
+    """
+    params = st.query_params
+    code = params.get("code")
+    returned_state = params.get("state")
+
+    if not code or not returned_state:
+        return False
+
+    expected_state = st.session_state.get("oauth_state")
+    if returned_state != expected_state:
+        st.error("OAuth state mismatch — possible CSRF. Please try again.")
+        st.query_params.clear()
+        return False
+
+    userinfo = _exchange_code_for_user(code)
+    st.query_params.clear()
+
+    if userinfo is None:
+        return False
+
+    google_id = userinfo.get("sub")
+    email = userinfo.get("email", "")
+    name = userinfo.get("name", email.split("@")[0])
+
+    user = get_or_create_google_user(google_id, email, name)
+    st.session_state["username"] = user["username"]
+    st.session_state["user_id"] = user["id"]
+    st.session_state.pop("oauth_state", None)
+    return True
+
+
+def render_login_wall() -> bool:
     if st.session_state.get("user_id") is not None:
         return True
 
+    # handle Google OAuth callback before rendering UI
+    if _handle_oauth_callback():
+        st.rerun()
+
     st.title("💪 Baireps - AI fitness coach")
     st.markdown("### Welcome! Please log in or create an account.")
+
+    google_configured = bool(_google_client_id() and _google_client_secret())
+
+    if google_configured:
+        st.markdown("")
+        if st.button("Continue with Google", use_container_width=True, type="primary"):
+            state = secrets.token_urlsafe(16)
+            st.session_state["oauth_state"] = state
+            auth_url = _build_google_auth_url(state)
+            # open in the same tab via a meta-redirect injected into the page
+            st.markdown(
+                f'<meta http-equiv="refresh" content="0; url={auth_url}">',
+                unsafe_allow_html=True,
+            )
+            st.stop()
+
+        st.markdown("---")
+        st.markdown("<p style='text-align:center;color:#888;margin:-8px 0 8px'>or sign in with username & password</p>", unsafe_allow_html=True)
 
     login_tab, register_tab = st.tabs(["Log In", "Register"])
 
