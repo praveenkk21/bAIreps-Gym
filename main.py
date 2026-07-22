@@ -24,7 +24,7 @@ from services.coaching.voice_pipeline import VoicePipeline, autoplay_audio
 def main():
     st.set_page_config(
         page_icon="💪",
-        page_title="AI Trainer",
+        page_title="bAIreps",
         initial_sidebar_state="collapsed",
         layout="centered"
     )
@@ -185,7 +185,7 @@ def main():
                 st.metric("Torso Angle", f"{st.session_state.torso_angle}°")
                 st.metric("Balance Status", st.session_state.balance_status)
     
-    st.header("AI Real time GYM coach")
+    st.header("Baireps - AI fitness coach")
     st.markdown("#### Real time pose detection with proactive AI voice coaching")
 
     if st.session_state.get("audio_to_play"):
