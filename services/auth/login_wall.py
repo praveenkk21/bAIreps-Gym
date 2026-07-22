@@ -33,12 +33,27 @@ def _google_client_secret() -> str:
 
 
 def _redirect_uri() -> str:
+    # 1. explicit env var
     v = os.environ.get("GOOGLE_REDIRECT_URI", "")
     if not v and hasattr(st, "secrets") and "GOOGLE_REDIRECT_URI" in st.secrets:
         v = st.secrets["GOOGLE_REDIRECT_URI"]
     if v:
         return v
-    # auto-detect from the current page URL so it works on any host
+
+    # 2. derive from forwarded headers (Streamlit Cloud sits behind a proxy)
+    try:
+        headers = st.context.headers
+        host = (
+            headers.get("x-forwarded-host")
+            or headers.get("host")
+            or "localhost:8501"
+        )
+        proto = headers.get("x-forwarded-proto") or ("https" if "localhost" not in host else "http")
+        return f"{proto}://{host}"
+    except Exception:
+        pass
+
+    # 3. last resort: parse the page URL
     try:
         from urllib.parse import urlparse
         parsed = urlparse(st.context.url)
@@ -60,6 +75,7 @@ def _build_google_auth_url() -> str:
 
 
 def _exchange_code_for_user(code: str) -> dict | None:
+    redirect = _redirect_uri()
     try:
         resp = httpx.post(
             _GOOGLE_TOKEN_URL,
@@ -67,12 +83,14 @@ def _exchange_code_for_user(code: str) -> dict | None:
                 "code": code,
                 "client_id": _google_client_id(),
                 "client_secret": _google_client_secret(),
-                "redirect_uri": _redirect_uri(),
+                "redirect_uri": redirect,
                 "grant_type": "authorization_code",
             },
             timeout=10,
         )
-        resp.raise_for_status()
+        if not resp.ok:
+            st.error(f"Google token exchange failed ({resp.status_code}). redirect_uri used: `{redirect}`")
+            return None
         access_token = resp.json().get("access_token")
         info = httpx.get(
             _GOOGLE_USERINFO_URL,
@@ -82,7 +100,7 @@ def _exchange_code_for_user(code: str) -> dict | None:
         info.raise_for_status()
         return info.json()
     except Exception as e:
-        st.error(f"Google sign-in failed: {e}")
+        st.error(f"Google sign-in failed: {e}. redirect_uri used: `{redirect}`")
         return None
 
 
@@ -124,14 +142,7 @@ def render_login_wall() -> bool:
 
     if google_configured:
         st.markdown("")
-        if st.button("Continue with Google", use_container_width=True, type="primary"):
-            auth_url = _build_google_auth_url()
-            st.markdown(
-                f'<meta http-equiv="refresh" content="0; url={auth_url}">',
-                unsafe_allow_html=True,
-            )
-            st.stop()
-
+        st.link_button("Continue with Google", url=_build_google_auth_url(), use_container_width=True, type="primary")
         st.markdown("---")
         st.markdown("<p style='text-align:center;color:#888;margin:-8px 0 8px'>or sign in with username & password</p>", unsafe_allow_html=True)
 
