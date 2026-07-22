@@ -39,7 +39,7 @@ def init_db() -> None:
         if "password_hash" not in cols:
             conn.execute("ALTER TABLE users ADD COLUMN password_hash TEXT NOT NULL DEFAULT ''")
         if "google_id" not in cols:
-            conn.execute("ALTER TABLE users ADD COLUMN google_id TEXT UNIQUE")
+            conn.execute("ALTER TABLE users ADD COLUMN google_id TEXT")
         if "email" not in cols:
             conn.execute("ALTER TABLE users ADD COLUMN email TEXT")
         conn.execute(
